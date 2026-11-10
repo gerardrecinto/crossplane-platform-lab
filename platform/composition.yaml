@@ -1,0 +1,66 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: webapp
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: WebApp
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $name := $xr.metadata.name }}
+            {{- $ns := $xr.metadata.namespace }}
+            {{- $avail := default 0 (dig "resources" "deployment" "resource" "status" "availableReplicas" 0 .observed) }}
+            ---
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: {{ $name }}
+              namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: deployment
+                gotemplating.fn.crossplane.io/ready: {{ if ge (int $avail) (int $xr.spec.replicas) }}"True"{{ else }}"False"{{ end }}
+            spec:
+              replicas: {{ $xr.spec.replicas }}
+              selector:
+                matchLabels:
+                  app: {{ $name }}
+              template:
+                metadata:
+                  labels:
+                    app: {{ $name }}
+                spec:
+                  containers:
+                    - name: app
+                      image: {{ $xr.spec.image }}
+                      ports:
+                        - containerPort: {{ $xr.spec.port }}
+            ---
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: {{ $name }}
+              namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: service
+                gotemplating.fn.crossplane.io/ready: "True"
+            spec:
+              selector:
+                app: {{ $name }}
+              ports:
+                - port: {{ $xr.spec.port }}
+            ---
+            apiVersion: platform.example.org/v1alpha1
+            kind: WebApp
+            status:
+              availableReplicas: {{ $avail }}
